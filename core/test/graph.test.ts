@@ -28,15 +28,14 @@ test("AI items are proposed and excluded until accepted", () => {
   assert.ok(g.auditTrail().some((a: any) => a.action === "accepted_node"));
 });
 
-test("timeline orders events and detects cycles", () => {
+test("timeline orders events and refuses cycles", () => {
   const g = new GraphStore();
   const o = g.addNode("Occurrence", "o", H);
   const [a, b, c] = ["a", "b", "c"].map(l => g.addNode("Event", l, H));
   for (const e of [c, a, b]) g.addEdge("PART_OF", e.id, o.id, H);
   g.addEdge("PRECEDES", a.id, b.id, H); g.addEdge("PRECEDES", b.id, c.id, H);
   assert.deepEqual(timeline(g, o.id).map(n => n.label), ["a", "b", "c"]);
-  g.addEdge("PRECEDES", c.id, a.id, H);
-  assert.throws(() => timeline(g, o.id), /cycle/);
+  assert.throws(() => g.addEdge("PRECEDES", c.id, a.id, H), /cycle/);
 });
 
 test("causal ancestors and open recommendations", () => {

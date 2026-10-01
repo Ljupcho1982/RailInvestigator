@@ -20,6 +20,12 @@ ol.tl{list-style:none;padding:0;margin:0;border-left:2px solid var(--line);margi
 ol.tl li{padding:6px 0 6px 16px;position:relative}ol.tl li:before{content:"";position:absolute;left:-7px;top:12px;width:12px;height:12px;border-radius:50%;background:var(--acc)}
 svg{width:100%;height:auto;background:var(--card);border:1px solid var(--line);border-radius:8px}
 svg text{fill:var(--ink);font-size:12px}svg rect{fill:var(--bg);stroke:var(--line)}svg path{stroke:var(--mute);fill:none}
+form.f{display:flex;gap:8px;flex-wrap:wrap;align-items:end}
+form.f label{display:flex;flex-direction:column;font-size:12px;color:var(--mute);gap:2px}
+input,select{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 8px;min-width:0;max-width:100%}
+button.p{border:0;background:var(--acc);color:var(--bg);border-radius:6px;padding:7px 14px;font:inherit;cursor:pointer}
+button.s{border:1px solid var(--line);background:none;color:var(--ink);border-radius:6px;padding:4px 10px;font:inherit;cursor:pointer}
+.err{color:var(--bad);margin:0 0 10px}h3{margin:18px 0 6px;font-size:14px}
 .empty{color:var(--mute);padding:24px;text-align:center}
 </style></head><body>
 <header><h1>RailInvestigator</h1>
@@ -29,11 +35,11 @@ svg text{fill:var(--ink);font-size:12px}svg rect{fill:var(--bg);stroke:var(--lin
 const $=(s)=>document.querySelector(s);
 // All dynamic text goes through textContent — report text is untrusted.
 function h(tag,attrs={},...kids){const e=document.createElement(tag);
-  for(const[k,v]of Object.entries(attrs)){k==="onclick"?e.onclick=v:e.setAttribute(k,v)}
+  for(const[k,v]of Object.entries(attrs)){k.startsWith("on")?e[k]=v:e.setAttribute(k,v)}
   for(const c of kids.flat())e.append(c instanceof Node?c:document.createTextNode(c??""));return e}
 const api=(p,o)=>fetch(p,o).then(r=>r.json());
-const TABS={review:"Review queue",timeline:"Timeline",causal:"Causal graph",recs:"Recommendations"};
-let tab="review";
+const TABS={build:"Case builder",review:"Review queue",timeline:"Timeline",causal:"Causal graph",recs:"Recommendations"};
+let tab="build",editing=null,flash="";
 function renderTabs(){const t=$("#tabs");t.replaceChildren(...Object.entries(TABS).map(([k,v])=>
   h("button",{role:"tab","aria-selected":k===tab,onclick:()=>{tab=k;show()}},v)))}
 async function show(){renderTabs();const v=$("#view");v.replaceChildren(await VIEWS[tab]())}
@@ -42,6 +48,67 @@ async function decide(kind,id,decision){await api("/api/review",{method:"POST",h
 const buttons=(kind,id)=>h("span",{},h("button",{class:"a",onclick:()=>decide(kind,id,"accepted")},"Accept")," ",h("button",{class:"r",onclick:()=>decide(kind,id,"rejected")},"Reject"));
 
 const VIEWS={
+async build(){
+  const [S,C]=await Promise.all([api("/api/schema"),api("/api/case")]);const d=h("div");
+  const byId=Object.fromEntries(C.nodes.map(n=>[n.id,n]));
+  const act=async(fn)=>{flash="";try{const r=await fn();if(r&&r.error)flash=r.error}catch(e){flash=String(e)}show()};
+  const post=(path,method,b)=>api(path,{method,headers:{"content-type":"application/json"},body:JSON.stringify(b)});
+  if(flash)d.append(h("p",{class:"err",role:"alert"},flash));
+
+  // ---- add item ----
+  const type=h("select",{id:"nt"},S.NODE_TYPES.map(t=>h("option",{value:t},t)));
+  const label=h("input",{id:"nl",maxlength:"300",required:"",placeholder:"What is it?",size:"36"});
+  const extra=h("span");
+  const occs=C.nodes.filter(n=>n.type==="Occurrence");
+  const syncExtra=()=>{extra.replaceChildren();
+    if(type.value==="CausalFactor")extra.append(h("label",{},"Level",h("select",{id:"nx"},S.CAUSAL_LEVEL.map(v=>h("option",{value:v},v)))));
+    if(type.value==="Occurrence")extra.append(h("label",{},"Class",h("select",{id:"nx"},S.OCCURRENCE_CLASS.map(v=>h("option",{value:v},v.replace("_"," "))))));
+    if(type.value==="Event"&&occs.length)extra.append(h("label",{},"Part of",h("select",{id:"nx"},occs.map(o=>h("option",{value:o.id},o.label)))))};
+  type.onchange=syncExtra;syncExtra();
+  const addForm=h("form",{class:"f",onsubmit:(ev)=>{ev.preventDefault();
+    const x=document.getElementById("nx"),b={type:type.value,label:label.value};
+    if(x){if(type.value==="CausalFactor")b.props={level:x.value};if(type.value==="Occurrence")b.props={class:x.value};if(type.value==="Event")b.occurrenceId=x.value}
+    act(()=>post("/api/node","POST",b))}},
+    h("label",{},"Type",type),h("label",{},"Label",label),extra,h("button",{class:"p",type:"submit"},"Add"));
+  d.append(h("h3",{},"Add item"),h("div",{class:"card"},addForm));
+
+  // ---- add link ----
+  const et=h("select",{id:"et"},S.EDGE_TYPES.map(t=>h("option",{value:t},t)));
+  const from=h("select",{id:"ef"}),to=h("select",{id:"eto"}),ev=h("select",{id:"ee"}),cit=h("input",{id:"ec",maxlength:"300",placeholder:"e.g. report p.14 §2",size:"22"});
+  const evWrap=h("span",{},h("label",{},"Evidence",ev),h("label",{},"or citation",cit));
+  const fill=(sel,types)=>{sel.replaceChildren(...C.nodes.filter(n=>types.includes(n.type)).map(n=>h("option",{value:n.id},`${n.label} (${n.type})`)))};
+  const syncEdge=()=>{const r=S.EDGE_RULES[et.value];fill(from,r.from);fill(to,r.to);
+    ev.replaceChildren(h("option",{value:""},"— none —"),...C.nodes.filter(n=>n.type==="Evidence").map(n=>h("option",{value:n.id},n.label)));
+    evWrap.style.display=["CAUSED","CONTRIBUTED_TO"].includes(et.value)?"":"none"};
+  et.onchange=syncEdge;syncEdge();
+  const linkForm=h("form",{class:"f",onsubmit:(e)=>{e.preventDefault();
+    act(()=>post("/api/edge","POST",{type:et.value,from:from.value,to:to.value,evidenceId:ev.value||undefined,citation:cit.value||undefined}))}},
+    h("label",{},"Link type",et),h("label",{},"From",from),h("label",{},"To",to),evWrap,h("button",{class:"p",type:"submit"},"Link"));
+  d.append(h("h3",{},"Link items"),h("div",{class:"card"},linkForm),
+    h("p",{class:"mute"},"Causal links (CAUSED / CONTRIBUTED_TO) need evidence or a citation."));
+
+  // ---- items ----
+  d.append(h("h3",{},"Items"));
+  if(!C.nodes.length)d.append(h("div",{class:"empty"},"Nothing yet — add an Occurrence to start."));
+  for(const t of S.NODE_TYPES){const ns=C.nodes.filter(n=>n.type===t);if(!ns.length)continue;
+    d.append(h("div",{class:"mute"},t));
+    for(const n of ns){
+      if(editing===n.id){const inp=h("input",{value:n.label,maxlength:"300",size:"40","aria-label":"Label"});
+        d.append(h("form",{class:"card f",onsubmit:(e)=>{e.preventDefault();editing=null;act(()=>post("/api/node","PATCH",{id:n.id,label:inp.value}))}},inp,
+          h("button",{class:"p",type:"submit"},"Save"),h("button",{class:"s",type:"button",onclick:()=>{editing=null;show()}},"Cancel")))}
+      else d.append(h("div",{class:"card"},h("div",{class:"row"},
+        h("div",{},n.label," ",n.status==="proposed"?h("span",{class:"tag ai"},"proposed"):"",n.props.level?h("span",{class:"tag"},n.props.level):"",n.props.class?h("span",{class:"tag"},n.props.class.replace("_"," ")):""),
+        h("span",{},h("button",{class:"s",onclick:()=>{editing=n.id;show()}},"Edit")," ",
+          h("button",{class:"r",onclick:()=>{if(confirm(`Remove "${n.label}" and its links? This is recorded in the audit log.`))act(()=>post("/api/remove","POST",{kind:"node",id:n.id}))}},"Remove")))))}}
+
+  // ---- links ----
+  d.append(h("h3",{},"Links"));
+  if(!C.edges.length)d.append(h("div",{class:"empty"},"No links yet."));
+  for(const e of C.edges)d.append(h("div",{class:"card"},h("div",{class:"row"},
+    h("div",{},h("span",{class:"tag"},e.type)," ",e.fromLabel," → ",e.toLabel,e.status==="proposed"?h("span",{class:"tag ai"},"proposed"):"",
+      (e.provenance.citation||e.provenance.evidenceId)?h("div",{class:"mute"},e.provenance.citation||("evidence: "+(byId[e.provenance.evidenceId]?.label??""))):""),
+    h("button",{class:"r",onclick:()=>{if(confirm("Remove this link?"))act(()=>post("/api/remove","POST",{kind:"edge",id:e.id}))}},"Remove"))));
+  return d},
 async review(){const p=await api("/api/pending");const d=h("div");
   if(!p.nodes.length&&!p.edges.length)return h("div",{class:"empty"},"Nothing waiting for review.");
   d.append(h("p",{class:"mute"},"Proposed items are excluded from all analysis until you accept them."));

@@ -36,14 +36,15 @@ export class GraphStore {
         src TEXT NOT NULL REFERENCES nodes(id), dst TEXT NOT NULL REFERENCES nodes(id),
         props TEXT NOT NULL, status TEXT NOT NULL, provenance TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS audit(seq INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,
-        actor TEXT NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL);
+        actor TEXT NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, detail TEXT);
       CREATE INDEX IF NOT EXISTS edges_src ON edges(src); CREATE INDEX IF NOT EXISTS edges_dst ON edges(dst);
     `);
+    try { this.db.exec("ALTER TABLE audit ADD COLUMN detail TEXT"); } catch { /* column already exists */ }
   }
 
-  private log(actor: string, action: string, target: string) {
-    this.db.prepare("INSERT INTO audit(ts,actor,action,target) VALUES(?,?,?,?)")
-      .run(new Date().toISOString(), actor, action, target);
+  private log(actor: string, action: string, target: string, detail?: unknown) {
+    this.db.prepare("INSERT INTO audit(ts,actor,action,target,detail) VALUES(?,?,?,?,?)")
+      .run(new Date().toISOString(), actor, action, target, detail === undefined ? null : JSON.stringify(detail));
   }
 
   addNode(type: NodeType, label: string, provenance: Provenance, props: Record<string, unknown> = {}): GraphNode {
@@ -62,6 +63,9 @@ export class GraphStore {
     if (!a || !b) throw new Error("edge endpoint not found");
     const err = validateEdge(type, a.type, b.type);
     if (err) throw new Error(err);
+    if (from === to) throw new Error(`${type}: an item cannot link to itself`);
+    // A loop of PRECEDES edges has no valid timeline order, so refuse to create one.
+    if (type === "PRECEDES" && this.reaches(to, from)) throw new Error("PRECEDES: would create a cycle in the timeline");
     // Causal claims need support: a human-made causal edge must cite evidence.
     if ((type === "CAUSED" || type === "CONTRIBUTED_TO") && !provenance.evidenceId && !provenance.citation)
       throw new Error(`${type} requires evidence or citation`);
@@ -73,11 +77,66 @@ export class GraphStore {
     return e;
   }
 
+  /** True if `target` is reachable from `start` over accepted/proposed PRECEDES edges. */
+  private reaches(start: string, target: string): boolean {
+    const next = this.db.prepare("SELECT dst FROM edges WHERE type='PRECEDES' AND src=? AND status!='rejected'");
+    const seen = new Set<string>(), stack = [start];
+    while (stack.length) {
+      const cur = stack.pop()!;
+      if (cur === target) return true;
+      if (seen.has(cur)) continue;
+      seen.add(cur);
+      for (const r of next.all(cur) as { dst: string }[]) stack.push(r.dst);
+    }
+    return false;
+  }
+
   review(kind: "node" | "edge", id: string, decision: "accepted" | "rejected", reviewer: string) {
     const table = kind === "node" ? "nodes" : "edges";
     this.db.prepare(`UPDATE ${table} SET status=? WHERE id=?`).run(decision, id);
     this.log(reviewer, `${decision}_${kind}`, id);
   }
+
+  /**
+   * Edit a node's label and/or props. The previous values are kept in the audit
+   * log. Editing an AI-proposed item does not accept it — review stays separate.
+   */
+  updateNode(id: string, patch: { label?: string; props?: Record<string, unknown> }, actor: string): GraphNode {
+    const n = this.getAnyNode(id);
+    if (!n) throw new Error("node not found");
+    if (n.status === "rejected") throw new Error("node was removed");
+    const label = patch.label ?? n.label;
+    if (!label.trim()) throw new Error("label required");
+    const props = patch.props ?? n.props;
+    this.db.prepare("UPDATE nodes SET label=?, props=? WHERE id=?").run(label.trim(), JSON.stringify(props), id);
+    this.log(actor, "edit_node", id, { before: { label: n.label, props: n.props }, after: { label: label.trim(), props } });
+    return this.getAnyNode(id)!;
+  }
+
+  /**
+   * Remove a node or edge. This is a soft delete (status "rejected"): history and
+   * audit stay intact, and analysis ignores it. Removing a node removes its edges.
+   */
+  remove(kind: "node" | "edge", id: string, actor: string) {
+    if (kind === "edge") {
+      this.db.prepare("UPDATE edges SET status='rejected' WHERE id=?").run(id);
+      this.log(actor, "remove_edge", id);
+      return;
+    }
+    this.db.prepare("UPDATE nodes SET status='rejected' WHERE id=?").run(id);
+    const touched = this.db.prepare("SELECT id FROM edges WHERE (src=? OR dst=?) AND status!='rejected'").all(id, id) as { id: string }[];
+    this.db.prepare("UPDATE edges SET status='rejected' WHERE src=? OR dst=?").run(id, id);
+    this.log(actor, "remove_node", id, { edgesRemoved: touched.map(e => e.id) });
+  }
+
+  /** Any non-removed node regardless of review status (for the case builder). */
+  allNodes(): GraphNode[] {
+    return this.db.prepare("SELECT * FROM nodes WHERE status!='rejected' ORDER BY rowid").all().map(r => this.rowToNode(r));
+  }
+  allEdges(): GraphEdge[] {
+    return this.db.prepare("SELECT * FROM edges WHERE status!='rejected' ORDER BY rowid").all().map(r => this.rowToEdge(r));
+  }
+  private getAnyNode(id: string) { return this.getNode(id); }
 
   private rowToNode(r: any): GraphNode {
     return { id: r.id, type: r.type, label: r.label, props: JSON.parse(r.props), status: r.status, provenance: JSON.parse(r.provenance) };

@@ -20,4 +20,6 @@ npm test
 npm run demo      # console demo
 npm run app       # review queue / timeline / causal graph UI at http://127.0.0.1:4173 (demo data)
 ```
+The **Case builder** tab lets you add, edit and remove items and links by hand (no AI needed). Edits keep the previous value in the audit log; removals are soft deletes that analysis ignores.
+
 Pass a `.db` path (`node --experimental-sqlite app/server.ts case.db`) to open a saved investigation.
