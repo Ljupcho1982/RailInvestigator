@@ -1,0 +1,10 @@
+{
+  "name": "railinvestigator",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "test": "node --test --experimental-sqlite core/test/*.test.ts",
+    "demo": "node --experimental-sqlite core/src/demo.ts"
+  }
+}
