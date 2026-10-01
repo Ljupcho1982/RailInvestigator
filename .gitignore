@@ -3,3 +3,5 @@ node_modules/
 *.sqlite
 dist/
 target/
+data/reports/*
+!data/reports/.gitkeep

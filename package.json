@@ -5,6 +5,7 @@
   "engines": { "node": ">=22.18" },
   "scripts": {
     "test": "node --test --experimental-sqlite core/test/*.test.ts",
+    "fetch-reports": "node scripts/fetch-reports.mjs",
     "demo": "node --experimental-sqlite core/src/demo.ts"
   }
 }
