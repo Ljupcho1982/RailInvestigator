@@ -13,7 +13,22 @@ investigators **decide**.
 3. **Causal claims need support** – `CAUSED`/`CONTRIBUTED_TO` edges require evidence or a citation.
 4. **Local-first** – data stays on the investigator's machine; cloud LLMs are opt-in.
 
-## Try it
+## Desktop app
+```
+npm install
+npm run desktop     # build + launch the desktop app (add --no-sandbox only inside containers/root)
+npm run dist        # build installers into release/ (AppImage + .deb on Linux)
+```
+Each investigation is one SQLite file (**File → New Case… / Open Case… / Save a Copy…**); the last case reopens
+on launch, and a demo case is available from the File menu. The app runs the local API on `127.0.0.1` with a
+random port inside the app, shows the UI in a sandboxed window with a strict content-security policy, and
+blocks navigation to anywhere else. **No network access is needed to use it.**
+
+Built and tested on Linux (packaged AppImage/.deb launched headless, data persisted across restarts).
+Windows and macOS builds are configured in `.github/workflows/build.yml` but **not yet built or tested**;
+installers are unsigned and use the default Electron icon.
+
+## Try it (command line)
 Requires Node >= 22.18 (zero dependencies; uses built-in `node:sqlite`).
 ```
 npm test

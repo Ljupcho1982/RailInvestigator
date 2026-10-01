@@ -5,3 +5,5 @@ dist/
 target/
 data/reports/*
 !data/reports/.gitkeep
+release/
+dist/

@@ -43,3 +43,22 @@ test("self-links and timeline cycles are refused at creation", () => {
   g.remove("node", b.id, "inv");            // path a→b→c is gone, so c→a is now fine
   g.addEdge("PRECEDES", c.id, a.id, H);
 });
+
+test("saveCopy writes a consistent, independent copy of the case", async () => {
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "rail-"));
+  try {
+    const g = new GraphStore();
+    const n = g.addNode("Event", "kept", H);
+    g.updateNode(n.id, { label: "kept v2" }, "inv");
+    g.saveCopy(join(dir, "copy.db"));
+    g.addNode("Event", "added after copy", H);
+    const copy = new GraphStore(join(dir, "copy.db"));
+    assert.deepEqual(copy.allNodes().map(x => x.label), ["kept v2"]);
+    assert.ok(copy.auditTrail().some((a: any) => a.action === "edit_node"));   // audit trail travels with the case
+    copy.close();
+    g.close();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

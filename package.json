@@ -2,11 +2,60 @@
   "name": "railinvestigator",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22.18" },
+  "engines": {
+    "node": ">=22.18"
+  },
   "scripts": {
     "test": "node --test --experimental-sqlite core/test/*.test.ts",
     "fetch-reports": "node scripts/fetch-reports.mjs",
     "app": "node --experimental-sqlite app/server.ts",
-    "demo": "node --experimental-sqlite core/src/demo.ts"
+    "demo": "node --experimental-sqlite core/src/demo.ts",
+    "build": "node scripts/build.mjs",
+    "desktop": "npm run build && electron .",
+    "dist": "npm run build && electron-builder --publish never"
+  },
+  "devDependencies": {
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3"
+  },
+  "version": "0.1.0",
+  "description": "Local-first knowledge graph for railway accident and serious incident investigation",
+  "author": {
+    "name": "RailInvestigator",
+    "email": "ljupco.semov@gmail.com"
+  },
+  "license": "UNLICENSED",
+  "main": "desktop/main.cjs",
+  "build": {
+    "appId": "org.railinvestigator.app",
+    "productName": "RailInvestigator",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "desktop/**",
+      "dist/**",
+      "package.json"
+    ],
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Office",
+      "maintainer": "RailInvestigator <ljupco.semov@gmail.com>"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.productivity"
+    }
   }
 }

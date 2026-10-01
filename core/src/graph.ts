@@ -42,6 +42,11 @@ export class GraphStore {
     try { this.db.exec("ALTER TABLE audit ADD COLUMN detail TEXT"); } catch { /* column already exists */ }
   }
 
+  close() { this.db.close(); }
+
+  /** Write a consistent copy of the whole case (nodes, edges, audit) to a new file. */
+  saveCopy(path: string) { this.db.prepare("VACUUM INTO ?").run(path); }
+
   private log(actor: string, action: string, target: string, detail?: unknown) {
     this.db.prepare("INSERT INTO audit(ts,actor,action,target,detail) VALUES(?,?,?,?,?)")
       .run(new Date().toISOString(), actor, action, target, detail === undefined ? null : JSON.stringify(detail));
