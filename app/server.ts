@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { GraphStore } from "../core/src/graph.ts";
 import { buildDemo } from "../core/src/seed.ts";
 import { NODE_TYPES, EDGE_TYPES, EDGE_RULES, CAUSAL_LEVEL, OCCURRENCE_CLASS, type NodeType, type EdgeType } from "../core/src/ontology.ts";
+import { placeEvent } from "../core/src/timeline.ts";
 import { timeline, openRecommendations, unaddressedFactors } from "../core/src/analysis.ts";
 
 const dbPath = process.argv[2];
@@ -19,6 +20,8 @@ const cleanProps = (v: unknown) => {
   if (typeof v !== "object" || v === null || Array.isArray(v) || JSON.stringify(v).length > 4000) return null;
   return v as Record<string, unknown>;
 };
+// "start" | "end" | an event id. Defaults to the end of the timeline.
+const cleanPosition = (v: unknown) => (typeof v === "string" && v ? v : "end");
 const json = (res: any, body: unknown, code = 200) => {
   res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(body));
 };
@@ -70,11 +73,10 @@ createServer(async (req, res) => {
       if (!label) return json(res, { error: "label required (max 300 chars)" }, 400);
       if (!props) return json(res, { error: "props must be a small object" }, 400);
       const node = g.addNode(b.type as NodeType, label, { source: "human" }, props);
-      // Convenience: a new Event can be attached to its occurrence in one step.
+      // Convenience: a new Event can be placed on its occurrence's timeline in one step.
       if (b.type === "Event" && b.occurrenceId) {
-        const o = g.getNode(b.occurrenceId);
-        if (o?.type !== "Occurrence") return json(res, { error: "occurrenceId is not an Occurrence" }, 400);
-        g.addEdge("PART_OF", node.id, o.id, { source: "human" });
+        try { placeEvent(g, node.id, String(b.occurrenceId), cleanPosition(b.after), REVIEWER); }
+        catch (e) { g.remove("node", node.id, REVIEWER); throw e; }   // don't leave a half-created event
       }
       return json(res, node, 201);
     }
@@ -84,6 +86,11 @@ createServer(async (req, res) => {
       if (b.label !== undefined) { const l = cleanLabel(b.label); if (!l) return json(res, { error: "label required (max 300 chars)" }, 400); patch.label = l; }
       if (b.props !== undefined) { const p = cleanProps(b.props); if (!p) return json(res, { error: "props must be a small object" }, 400); patch.props = p; }
       return json(res, g.updateNode(String(b.id), patch, REVIEWER));
+    }
+    if (url.pathname === "/api/place" && req.method === "POST") {
+      const b = await body(req);
+      placeEvent(g, String(b.eventId), String(b.occurrenceId), cleanPosition(b.after), REVIEWER);
+      return json(res, { ok: true });
     }
     if (url.pathname === "/api/edge" && req.method === "POST") {
       const b = await body(req);
@@ -100,5 +107,5 @@ createServer(async (req, res) => {
       return json(res, { ok: true });
     }
     json(res, { error: "not found" }, 404);
-  } catch (e) { json(res, { error: (e as Error).message }, e instanceof SyntaxError || /not allowed|itself|cycle|requires|not found|removed|label|endpoint|unknown/.test((e as Error).message) ? 400 : 500); }
+  } catch (e) { json(res, { error: (e as Error).message }, e instanceof SyntaxError || /not allowed|itself|cycle|different occurrence|anchor|not an |requires|not found|removed|label|endpoint|unknown/.test((e as Error).message) ? 400 : 500); }
 }).listen(PORT, "127.0.0.1", () => console.log(`RailInvestigator on http://127.0.0.1:${PORT} (${dbPath ?? "demo, in-memory"})`));

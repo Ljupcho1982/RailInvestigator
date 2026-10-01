@@ -50,6 +50,7 @@ const buttons=(kind,id)=>h("span",{},h("button",{class:"a",onclick:()=>decide(ki
 const VIEWS={
 async build(){
   const [S,C]=await Promise.all([api("/api/schema"),api("/api/case")]);const d=h("div");
+  const TL={};await Promise.all(C.nodes.filter(n=>n.type==="Occurrence").map(async o=>{TL[o.id]=await api("/api/timeline?id="+encodeURIComponent(o.id))}));
   const byId=Object.fromEntries(C.nodes.map(n=>[n.id,n]));
   const act=async(fn)=>{flash="";try{const r=await fn();if(r&&r.error)flash=r.error}catch(e){flash=String(e)}show()};
   const post=(path,method,b)=>api(path,{method,headers:{"content-type":"application/json"},body:JSON.stringify(b)});
@@ -63,11 +64,16 @@ async build(){
   const syncExtra=()=>{extra.replaceChildren();
     if(type.value==="CausalFactor")extra.append(h("label",{},"Level",h("select",{id:"nx"},S.CAUSAL_LEVEL.map(v=>h("option",{value:v},v)))));
     if(type.value==="Occurrence")extra.append(h("label",{},"Class",h("select",{id:"nx"},S.OCCURRENCE_CLASS.map(v=>h("option",{value:v},v.replace("_"," "))))));
-    if(type.value==="Event"&&occs.length)extra.append(h("label",{},"Part of",h("select",{id:"nx"},occs.map(o=>h("option",{value:o.id},o.label)))))};
+    if(type.value==="Event"&&occs.length){
+      const pos=h("select",{id:"np"}),occSel=h("select",{id:"nx"},occs.map(o=>h("option",{value:o.id},o.label)));
+      const fillPos=()=>pos.replaceChildren(h("option",{value:"end"},"At the end"),h("option",{value:"start"},"At the start"),
+        ...(TL[occSel.value]||[]).map(e=>h("option",{value:e.id},"After: "+e.label)));
+      occSel.onchange=fillPos;fillPos();
+      extra.append(h("label",{},"Part of",occSel),h("label",{},"Place",pos))}};
   type.onchange=syncExtra;syncExtra();
   const addForm=h("form",{class:"f",onsubmit:(ev)=>{ev.preventDefault();
     const x=document.getElementById("nx"),b={type:type.value,label:label.value};
-    if(x){if(type.value==="CausalFactor")b.props={level:x.value};if(type.value==="Occurrence")b.props={class:x.value};if(type.value==="Event")b.occurrenceId=x.value}
+    if(x){if(type.value==="CausalFactor")b.props={level:x.value};if(type.value==="Occurrence")b.props={class:x.value};if(type.value==="Event"){b.occurrenceId=x.value;b.after=document.getElementById("np").value}}
     act(()=>post("/api/node","POST",b))}},
     h("label",{},"Type",type),h("label",{},"Label",label),extra,h("button",{class:"p",type:"submit"},"Add"));
   d.append(h("h3",{},"Add item"),h("div",{class:"card"},addForm));
@@ -118,7 +124,14 @@ async review(){const p=await api("/api/pending");const d=h("div");
 async timeline(){const occ=await api("/api/occurrences");const d=h("div");
   if(!occ.length)return h("div",{class:"empty"},"No occurrences yet.");
   for(const o of occ){d.append(h("h2",{},o.label));const t=await api("/api/timeline?id="+encodeURIComponent(o.id));
-    d.append(h("ol",{class:"tl"},t.map(e=>h("li",{},e.label))))}
+    const move=async(eventId,after)=>{const r=await api("/api/place",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({eventId,occurrenceId:o.id,after})});
+      flash=r.error||"";if(flash)alert(flash);show()};
+    if(!t.length)d.append(h("div",{class:"empty"},"No events yet — add some in the Case builder."));
+    d.append(h("ol",{class:"tl"},t.map(e=>{
+      const sel=h("select",{"aria-label":"Move "+e.label,onchange:()=>{if(sel.value)move(e.id,sel.value)}},
+        h("option",{value:""},"Move…"),h("option",{value:"start"},"To the start"),h("option",{value:"end"},"To the end"),
+        ...t.filter(x=>x.id!==e.id).map(x=>h("option",{value:x.id},"After: "+x.label)));
+      return h("li",{},h("span",{class:"row"},h("span",{},e.label),sel))})))}
   return d},
 async causal(){const g=await api("/api/graph");const linked=new Set(g.edges.flatMap(e=>[e.from,e.to]));g.nodes=g.nodes.filter(n=>linked.has(n.id));if(!g.nodes.length)return h("div",{class:"empty"},"No accepted causal data.");
   // Layer by longest causal distance from sinks (effects on the right, root causes on the left).
